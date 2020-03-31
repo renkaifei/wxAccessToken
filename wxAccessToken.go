@@ -14,51 +14,76 @@ type AccessToken struct {
 	ExpiresIn int    `json:"expires_in"`
 }
 
+type JsapiTicket struct {
+	ErrCode   int    `json:"errcode"`
+	ErrMsg    string `json:"errmsg"`
+	Ticket    string `json:"ticket"`
+	ExpiresIn int    `json:"expires_in"`
+}
+
 func main() {
 	for {
-		accessToken := GetWxKey()
-		if accessToken == "" {
-			resp, err := http.Get("https://api.weixin.qq.com/cgi-bin/token?grant_type=client_credential&appid=wx423d0019a7141df4&secret=b202c14ae77ef834428b1a92385ef853")
-			if err != nil {
-				log.Fatal("error:" + err.Error())
-				return
-			}
-
-			arrbyte, err := ioutil.ReadAll(resp.Body)
-			if err != nil {
-				log.Fatal("error:" + err.Error())
-				return
-			}
-			var result AccessToken
-			err = json.Unmarshal(arrbyte, &result)
-			if err != nil {
-				log.Fatal("error:" + err.Error())
-				return
-			}
-			SetWxKey(result.Token)
+		resp, err := http.Get("https://api.weixin.qq.com/cgi-bin/token?grant_type=client_credential&appid=&secret=")
+		if err != nil {
+			log.Fatal(err)
 		}
-		time.Sleep(1000 * 60 * 90 * time.Millisecond)
+		arrbyte, err := ioutil.ReadAll(resp.Body)
+		defer resp.Body.Close()
+		if err != nil {
+			log.Fatal(err)
+		}
+		var result AccessToken
+		log.Println(string(arrbyte))
+		err = json.Unmarshal(arrbyte, &result)
+		if err != nil {
+			log.Fatal(err)
+		}
+		SetWxKey("wx_access_token", result.Token)
+		err = FetchJsapiticket(result.Token)
+		if err != nil {
+			log.Fatal(err)
+		}
+		time.Sleep(1000 * time.Millisecond * 60 * 90)
 	}
 }
 
-func GetWxKey() string {
+func FetchJsapiticket(accessToken string) error {
+	resp, err := http.Get("https://api.weixin.qq.com/cgi-bin/ticket/getticket?access_token=" + accessToken + "&type=jsapi")
+	if err != nil {
+		return err
+	}
+	var result JsapiTicket
+	arrbyte, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	err = json.Unmarshal(arrbyte, &result)
+	if err != nil {
+		return err
+	}
+	SetWxKey("jsapi_ticket", result.Ticket)
+	return nil
+}
+
+func GetWxKey(key string) (string, error) {
 	conn, err := redis.Dial("tcp", ":6379")
 	if err != nil {
-		log.Fatal(err)
+		return "", err
 	}
 	defer conn.Close()
-	accessToken, _ := redis.String(conn.Do("GET", "wx_access_token"))
-	return accessToken
+	accessToken, _ := redis.String(conn.Do("GET", key))
+	return accessToken, nil
 }
 
-func SetWxKey(value string) {
+func SetWxKey(key string, value string) error {
 	conn, err := redis.Dial("tcp", ":6379")
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	defer conn.Close()
 	conn.Send("MULTI")
-	conn.Send("SET", "wx_access_token", value)
-	conn.Send("EXPIRE", "wx_access_token", 5400)
+	conn.Send("SET", key, value)
+	conn.Send("EXPIRE", key, 7200)
 	conn.Do("EXEC")
+	return nil
 }
